@@ -167,6 +167,15 @@ def process_tree(path: AnalysisRequestPath):
         return jsonify({"error": "Data not found"}), 404
     return jsonify(process_tree)
 
+@api.get("/processed/<task_uid>/process_graph")
+def process_graph(path: AnalysisRequestPath):
+    task_uid = path.task_uid
+    try:
+        process_graph = read_analysis_json(task_uid, "process_graph.json", config.s3)
+    except FileNotFoundError:
+        return jsonify({"error": "Data not found"}), 404
+    return jsonify(process_graph)
+
 
 @api.get("/logs/<task_uid>/<log_type>")
 def logs(path: LogsRequestPath):

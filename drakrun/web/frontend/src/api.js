@@ -58,6 +58,21 @@ export async function getAnalysisProcessTree({
     return listRequest.data;
 }
 
+export async function getAnalysisProcessGraph({
+    analysisId,
+    abortController = undefined,
+}) {
+    const listRequest = await axios.get(
+        `/processed/${analysisId}/process_graph`,
+        abortController
+            ? {
+                  signal: abortController.signal,
+              }
+            : {},
+    );
+    return listRequest.data;
+}
+
 export async function getLog({ analysisId, logType, rangeStart, rangeEnd }) {
     const logRequest = await axios.get(`/logs/${analysisId}/${logType}`, {
         responseType: "text",

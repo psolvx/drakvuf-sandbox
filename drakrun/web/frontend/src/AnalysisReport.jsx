@@ -11,6 +11,7 @@ import { getLogLoader, LogViewer } from "./LogViewer.jsx";
 import { AnalysisMetadataTable } from "./AnalysisMetadataTable.jsx";
 import { AnalysisScreenshotViewer } from "./AnalysisScreenshotViewer.jsx";
 import { ProcessTreeView } from "./ProcessTreeView.jsx";
+import { ProcessGraphView } from "./ProcessGraphView.jsx";
 import { MethodFilterPicker } from "./MethodFilterPicker.jsx";
 import { ProcessInfoTable } from "./ProcessInfoTable.jsx";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
@@ -219,6 +220,7 @@ function AnalysisReportTabs({
     setSelectedProcess,
     activeReportTab,
     setActiveReportTab,
+    onSelectProcess,
 }) {
     const getHeader = useCallback(
         (tab) => {
@@ -262,6 +264,12 @@ function AnalysisReportTabs({
                         <ProcessLogViewer
                             analysisId={analysis.id}
                             selectedProcess={selectedProcess}
+                        />
+                    </PaddedTab>
+                    <PaddedTab tab="Process graph">
+                        <ProcessGraphView
+                            analysisId={analysis.id}
+                            onProcessSelect={onSelectProcess}
                         />
                     </PaddedTab>
                     {analysis.screenshots ? (
@@ -372,6 +380,7 @@ export function AnalysisReport({ analysis }) {
                         setSelectedProcess={onSelectProcess}
                         activeReportTab={activeReportTab}
                         setActiveReportTab={setActiveReportTab}
+                        onSelectProcess={onSelectProcess}
                     />
                 </div>
             </div>
