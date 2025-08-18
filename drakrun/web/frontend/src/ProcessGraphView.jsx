@@ -7,7 +7,8 @@ export function ProcessGraphView({
     analysisId,
     onProcessSelect,
 }) {
-    const [graphData, setGraphData] = useState(null);
+    const [graphElements, setGraphElements] = useState(null);
+    const [selectedElementData, setSelectedElementData] = useState(null);
     const [loading, setLoading] = useState();
     const [error, setError] = useState();
 
@@ -16,7 +17,7 @@ export function ProcessGraphView({
         setError(null);
         getAnalysisProcessGraph( {analysisId, AbortController })
             .then((data) => {
-                setGraphData(data);
+                setGraphElements(data.elements);
             })
             .catch((e) => {
                 console.error(e);
@@ -31,14 +32,29 @@ export function ProcessGraphView({
     useEffect(() => {
         const abortController = new AbortController();
         fetchGraphData(abortController);
-
         return () => abortController.abort();
     }, [fetchGraphData]);
 
+    const handleElementSelect = (element) => {
+        if (element) {
+            setSelectedElementData(element.data());
+        } else {
+            setSelectedElementData(null);
+        }
+    };
+
     if (loading) return <div>Loading...</div>;
     if (error) return <div>Error: {error}</div>;
-    if (!graphData) return <div>No data</div>;
+    if (!graphElements) return <div>No data</div>;
 
-    return <ProcessGraph elements={graphData.elements} onProcessSelect={onProcessSelect}/>;
+    return (
+    <div className="container-fluid">
+        <div className="row">
+            <div className="col-12">
+                <ProcessGraph elements={graphElements} onElementSelect={handleElementSelect}/>
+            </div>
+        </div>
+    </div>
+    );
 }
  

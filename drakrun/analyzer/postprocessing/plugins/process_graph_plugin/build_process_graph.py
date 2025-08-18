@@ -1,5 +1,5 @@
 from .process_graph import graph_from_tree
-from analyzer.postprocessing.plugins.plugin_base import PostprocessContext
+from drakrun.analyzer.postprocessing.plugins.plugin_base import PostprocessContext
 import logging
 import json
 

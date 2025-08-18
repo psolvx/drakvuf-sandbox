@@ -15,6 +15,7 @@ from .plugin_base import PostprocessPlugin
 from .process_dumps import process_dumps
 from .screenshot_metadata import screenshot_metadata
 from .split_drakmon_log import split_drakmon_log
+from .process_graph_plugin.build_process_graph import build_process_graph
 
 POSTPROCESS_PLUGINS = [
     PostprocessPlugin(
@@ -79,5 +80,8 @@ POSTPROCESS_PLUGINS = [
     ),
     PostprocessPlugin(
         function=index_logs, requires=["process_tree.json"], generates=["log_index"]
+    ),
+        PostprocessPlugin(
+        function=build_process_graph, requires=["process_tree.json"], generates=["process_graph.json"]
     ),
 ]
