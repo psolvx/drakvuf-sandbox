@@ -1,7 +1,9 @@
 import logging
+from typing import Iterator
 import networkx as nx 
 import pathlib
 from collections import defaultdict
+from .events import BaseEvent
 
 from drakrun.analyzer.postprocessing.process_tree import Process, ProcessTree
 
@@ -9,14 +11,11 @@ from drakrun.analyzer.postprocessing.process_tree import Process, ProcessTree
 logger = logging.getLogger(__name__)
 
 class ProcessGraph:
-    """A wrapper around a NetworkX graph"""
-
     def __init__(self):
         self._graph = nx.MultiDiGraph()
         self._summary_graph = nx.MultiDiGraph()
 
     def add_process_node(self, process: Process):
-        """Adds a process to the graph with consistent attributes."""
         self._graph.add_node(
             process.seqid,
             type="Process",
@@ -25,8 +24,14 @@ class ProcessGraph:
         )
         logger.debug(f"Added node: {process.seqid} ({process.procname})")
 
+    def get_process_nodes(self) -> Iterator[Process]:
+        for node in self._graph.nodes(data=True):
+            # (seqid, data)
+            process = node[1]
+            if process and process.get("type") == "Process":
+                yield process
+
     def add_child_edge(self, parent: Process, child: Process):
-        """Adds a standard parent-child edge."""
         self._graph.add_edge(
             parent.seqid,
             child.seqid,
@@ -36,19 +41,26 @@ class ProcessGraph:
         )
         logger.debug(f"Added child edge: {parent.seqid} -> {child.seqid}")
         
-    def add_event_edge(self, source_process: Process, target_process: Process, event_data: dict):
-        technique = event_data.get("technique", "UNKNOWN")
+    def add_event_edge(self, source_process: Process, target_process: Process, event_data: BaseEvent):
         self._graph.add_edge(
             source_process.seqid,
             target_process.seqid,
-            key=f"interaction_{event_data.get('timestamp')}", # A unique key
+            key="interaction_" + str(event_data.evtid), # unique key
             type="interaction",
             data=event_data
         )
-        logger.info(f"Added event edge: {source_process.seqid} -> {target_process.seqid} ({technique})")
+        logger.info(f"Added event edge: {source_process.seqid} -> {target_process.seqid}, {event_data.method}")
 
-    def generate_summary_graph(self):
-        """"""
+    def get_in_event_edges(self, seqid: int) -> Iterator[BaseEvent]:
+        events = []
+        for edge in self._graph.in_edges(seqid, data=True):
+            # (src, dst, data)
+            event = edge[2]
+            if event.get("type") == "interaction":
+                events.append(event)
+        return events
+
+    def create_summary_graph(self):
         for node, data in self._graph.nodes(data=True):
             self._summary_graph.add_node(node, **data)
 
@@ -73,8 +85,9 @@ class ProcessGraph:
 
 
     def to_cytoscape_data(self) -> dict:
-        """Generate a summary graph and convert to Cytoscape JSON format."""
-        self.generate_summary_graph()
+        """Create a summary graph and convert it to Cytoscape JSON format."""
+        # event edges not subscriptable
+        self.create_summary_graph()
         return nx.cytoscape_data(self._summary_graph)
 
 

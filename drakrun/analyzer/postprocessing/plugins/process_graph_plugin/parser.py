@@ -1,72 +1,136 @@
+from collections import defaultdict
 import logging
-from typing import Optional, Dict, Any, Iterator
+import re
+from typing import Dict, Any, Iterator
 
 from .events import BaseEvent, AllocateEvent, WriteEvent, ExecuteEvent
-from analyzer.postprocessing.plugins.parse_utils import parse_log
+from ..parse_utils import parse_log
 
 logger = logging.getLogger(__name__)
 
-def parse_syscall_entry(entry: Dict[str, Any]) -> Optional[BaseEvent]:
-    method = entry.get("Method")
-    if not method:
-        return None
+class Parser:
+    def __init__(self):
 
-    try:
-        if method == "NtAllocateVirtualMemory" and entry.get("ReturnValue") == "0x0":
-            if "*BaseAddress" in entry:
+        # tid: {"rax": int, "rcx": int}
+        self.context_changes: Dict[int, Dict[str, int]] = defaultdict(dict)
+
+    def parse_entry(self, entry: Dict[str, Any]) -> BaseEvent:
+        method = entry.get("Method")
+        retval = entry.get("ReturnValue")
+        if not method or retval != "0x0":
+            return None
+
+        try:
+            base_info = {
+                "source_pid": entry.get("PID"),
+                "evtid": int(entry.get("EventUID"), 16),
+                "method": entry.get("Method"),
+                "raw_entry": entry
+            }
+
+            # Allocation primitives
+            if method in ["NtAllocateVirtualMemory", "NtAllocateVirtualMemoryEx"] and entry.get("ProcessHandle_PID"):
                 return AllocateEvent(
-                    timestamp=float(entry["TimeStamp"]),
-                    pid=entry["PID"],
-                    tid=entry["TID"],
-                    process_name=entry["ProcessName"],
-                    event_uid=entry["EventUID"],
-                    raw_entry=entry,
-                    target_pid=entry.get("ProcessHandle_PID", entry["PID"]),
-                    address=int(entry["*BaseAddress"], 16),
-                    size=int(entry["*RegionSize"], 16),
-                    protection=int(entry["Protect"], 16),
-                    method="NtAllocateVirtualMemory"
-                )
-
-        elif method == "NtWriteVirtualMemory":
-            target_pid = entry.get("ProcessHandle_PID")
-            if target_pid and entry["PID"] != target_pid: # remote write
-                return WriteEvent(
-                    timestamp=float(entry["TimeStamp"]),
-                    pid=entry["PID"],
-                    tid=entry["TID"],
-                    process_name=entry["ProcessName"],
-                    event_uid=entry["EventUID"],
-                    raw_entry=entry,
-                    target_pid=target_pid,
+                    **base_info,
+                    target_pid=int(entry.get("ProcessHandle_PID"), 16),
                     address=int(entry["BaseAddress"], 16),
-                    bytes_written=entry.get("NumberOfBytesToWrite", 0),
-                    method="NtWriteVirtualMemory"
-                )
+                    size=int(entry["RegionSize"], 16)
+                )                
 
-        elif method == "NtCreateThreadEx":
-            target_pid = entry.get("TargetPID")
-            if target_pid and entry["PID"] != target_pid:
-                return ExecuteEvent(
-                    timestamp=float(entry["TimeStamp"]),
-                    pid=entry["PID"],
-                    tid=entry["TID"],
-                    process_name=entry["ProcessName"],
-                    event_uid=entry["EventUID"],
-                    raw_entry=entry,
-                    target_pid=target_pid,
-                    technique="CreateRemoteThread",
-                    start_address=int(entry.get("StartAddress", "0"), 16),
-                    method="NtCreateThreadEx"
+            # Write primitives
+            elif method == "NtWriteVirtualMemory" and entry.get("ProcessHandle_PID") and int(entry["NumberOfBytesWritten"], 16) > 0:
+                return WriteEvent(
+                    **base_info,
+                    target_pid=int(entry.get("ProcessHandle_PID"), 16),
+                    address=int(entry["BaseAddress"], 16),
+                    bytes_written=int(entry["NumberOfBytesWritten"], 16)
                 )
+            
+            elif method in ["NtMapViewOfSection", "NtMapViewOfSectionEx"] and entry.get("ProcessHandle_PID"):
+                return WriteEvent(
+                    **base_info,
+                    target_pid=int(entry.get("ProcessHandle_PID"), 16),
+                    address=int(entry["BaseAddress"], 16),
+                    size=int(entry["ViewSize"], 16)
+                ) 
+            
+            elif method == "NtAddAtom":
+                pass
 
-    
-    except (KeyError, ValueError, TypeError) as e:
-        logger.debug(f"Skipping malformed log entry for {method}: {e}")
+            # Execute primitives
+            elif method == "NtCreateThread":
+                target_pid = int(entry.get("ProcessHandle_PID"), 16)
+                context_data = self.parse_context(entry.get("ThreadContext"))
+                rip = context_data.get("rip")
+                if target_pid and rip:
+                    return ExecuteEvent(
+                        **base_info,
+                        target_pid=target_pid,
+                        addresses=[rip],
+                    )
+                
+            elif method == "NtCreateThreadEx":
+                target_pid = int(entry.get("ProcessHandle_PID"), 16)
+                start_routine = entry.get("StartRoutine", 16)
+                if target_pid and start_routine:
+                    return ExecuteEvent(
+                        **base_info,
+                        target_pid=target_pid,
+                        addresses=[start_routine],
+                    )
+                
+            elif method == "RtlCreateUserThread":
+                target_pid = int(entry.get("ProcessHandle_PID"), 16)
+                start_address = entry.get("StartAddress", 16)
+                if target_pid and start_address:
+                    return ExecuteEvent(
+                        **base_info,
+                        target_pid=target_pid,
+                        addresses=[start_address],
+                    )
+                
+            elif method == "NtSetContextThread":
+                target_tid = int(entry.get("ThreadHandle_TID"), 16)
+                if target_tid:
+                    context_data = self.parse_context(entry.get("ThreadContext"))
+                    rip = context_data.get("rip")
+                    rcx = context_data.get("rcx")
+                    if rip:
+                        self.context_changes[target_tid]["rip"] = rip 
+                    if rcx:
+                        self.context_changes[target_tid]["rcx"] = rcx 
+                return None
+
+            elif method == "NtResumeThread":
+                target_tid = int(entry.get("ThreadHandle_TID"), 16)
+                if target_tid:
+                    # Was the context of this thread changed?
+                    context = self.context_changes.get(target_tid)
+                    if context:
+                        del self.context_changes[target_tid]
+                        return ExecuteEvent(
+                            **base_info,
+                            target_pid=int(entry.get("ThreadHandle_PID"), 16),
+                            addresses=[v for v in context.values() if v]
+                        )
+                        
+        
+        except (KeyError, ValueError, TypeError) as e:
+            logger.debug(f"Skipping malformed log entry for {method}: {e}, event {entry.get('EventUID')}")
+            return None
+
         return None
+    
+    def parse_context(self, context_str: str) -> Dict[str, int]:
+        registers = {}
+        matches = re.findall(r'(\w+): (\d+)', context_str)
+        for (reg, val) in matches:
+            registers[reg] = int(val)
+        return registers
+    
 
-    return None
 
 def stream_events(syscall_log_path) -> Iterator[BaseEvent]:
     logger.info(f"Streaming and parsing events from {syscall_log_path}...")
-    yield from parse_log(syscall_log_path, filter_cb=parse_syscall_entry)
+    parser = Parser()
+    yield from parse_log(syscall_log_path, filter_cb=parser.parse_entry)

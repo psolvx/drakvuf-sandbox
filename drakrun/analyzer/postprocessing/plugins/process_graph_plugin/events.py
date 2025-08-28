@@ -1,36 +1,29 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional
 
 @dataclass
 class BaseEvent:
-    timestamp: float
-    pid: int
-    tid: int
-    process_name: str
-    event_id: int
+    source_pid: int
+    target_pid: int
+    evtid: int
     raw_entry: dict
+    method: str
 
 @dataclass
 class AllocateEvent(BaseEvent):
-    event_type: str = "ALLOCATE"
-    target_pid: int
     address: int 
     size: int 
-    protection: int
-    method: str
-    
+    event_type: str = "allocate"
+
 @dataclass
 class WriteEvent(BaseEvent):
-    event_type: str = "WRITE"
-    target_pid: int
     address: int
     bytes_written: int
-    method: str
+    event_type: str = "write"
 
 @dataclass
 class ExecuteEvent(BaseEvent):
-    event_type: str = "EXECUTE"
     target_pid: int
-    start_address: Optional[int] = None
+    addresses: List[int]
     target_tid: Optional[int] = None
-    method: str
+    event_type: str = "execute"
