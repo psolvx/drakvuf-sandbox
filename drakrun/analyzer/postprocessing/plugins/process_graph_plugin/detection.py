@@ -1,6 +1,6 @@
 from .process_graph import ProcessGraph
 import logging
-from .events import AllocateEvent, WriteEvent, ExecuteEvent
+from .events import AllocateEvent, WriteEvent, ExecuteEvent, event_to_dict
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,10 @@ class DetectionEngine:
             allocations = [e['data'] for e in incoming_edges if isinstance(e['data'], AllocateEvent)]
             writes = [e['data'] for e in incoming_edges if isinstance(e['data'], WriteEvent)]
             executes = [e['data'] for e in incoming_edges if isinstance(e['data'], ExecuteEvent)]
-
+            logger.info(target_seqid)
+            logger.info(event_to_dict(allocations))
+            logger.info(event_to_dict(writes))
+            logger.info(event_to_dict(executes))
             self.correlate_primitives(target_seqid, allocations, writes, executes)
 
     def correlate_primitives(self, target_seqid, allocations, writes, executes):

@@ -17,7 +17,7 @@ class Parser:
     def parse_entry(self, entry: Dict[str, Any]) -> BaseEvent:
         method = entry.get("Method")
         retval = entry.get("ReturnValue")
-        if not method or retval != "0x0":
+        if not method or retval is None:
             return None
 
         try:
@@ -33,34 +33,34 @@ class Parser:
                 return AllocateEvent(
                     **base_info,
                     target_pid=int(entry.get("ProcessHandle_PID"), 16),
-                    address=int(entry["BaseAddress"], 16),
-                    size=int(entry["RegionSize"], 16)
+                    address=int(entry["*BaseAddress"], 16),
+                    size=int(entry["*RegionSize"], 16)
                 )                
 
             # Write primitives
-            elif method == "NtWriteVirtualMemory" and entry.get("ProcessHandle_PID") and int(entry["NumberOfBytesWritten"], 16) > 0:
+            elif method == "NtWriteVirtualMemory" and entry.get("ProcessHandle_PID") and int(entry["*NumberOfBytesWritten"], 16) > 0:
                 return WriteEvent(
                     **base_info,
                     target_pid=int(entry.get("ProcessHandle_PID"), 16),
-                    address=int(entry["BaseAddress"], 16),
-                    bytes_written=int(entry["NumberOfBytesWritten"], 16)
+                    address=int(entry["*BaseAddress"], 16),
+                    bytes_written=int(entry["*NumberOfBytesWritten"], 16)
                 )
             
             elif method in ["NtMapViewOfSection", "NtMapViewOfSectionEx"] and entry.get("ProcessHandle_PID"):
                 return WriteEvent(
                     **base_info,
                     target_pid=int(entry.get("ProcessHandle_PID"), 16),
-                    address=int(entry["BaseAddress"], 16),
-                    size=int(entry["ViewSize"], 16)
+                    address=int(entry["*BaseAddress"], 16),
+                    bytes_written=int(entry["*ViewSize"], 16)
                 ) 
             
             elif method == "NtAddAtom":
                 pass
 
             # Execute primitives
-            elif method == "NtCreateThread":
+            elif method == "NtCreateThread" and entry.get("ProcessHandle_PID"):
                 target_pid = int(entry.get("ProcessHandle_PID"), 16)
-                context_data = self.parse_context(entry.get("ThreadContext"))
+                context_data = self.parse_context(entry.get("*ThreadContext"))
                 rip = context_data.get("rip")
                 if target_pid and rip:
                     return ExecuteEvent(
@@ -69,9 +69,9 @@ class Parser:
                         addresses=[rip],
                     )
                 
-            elif method == "NtCreateThreadEx":
+            elif method == "NtCreateThreadEx" and entry.get("ProcessHandle_PID"):
                 target_pid = int(entry.get("ProcessHandle_PID"), 16)
-                start_routine = entry.get("StartRoutine", 16)
+                start_routine = int(entry.get("*StartRoutine"), 16)
                 if target_pid and start_routine:
                     return ExecuteEvent(
                         **base_info,
@@ -79,9 +79,9 @@ class Parser:
                         addresses=[start_routine],
                     )
                 
-            elif method == "RtlCreateUserThread":
+            elif method == "RtlCreateUserThread" and entry.get("ProcessHandle_PID"):
                 target_pid = int(entry.get("ProcessHandle_PID"), 16)
-                start_address = entry.get("StartAddress", 16)
+                start_address = entry.get("*StartAddress", 16)
                 if target_pid and start_address:
                     return ExecuteEvent(
                         **base_info,
@@ -89,10 +89,10 @@ class Parser:
                         addresses=[start_address],
                     )
                 
-            elif method == "NtSetContextThread":
+            elif method == "NtSetContextThread" and entry.get("ThreadHandle_PID"):
                 target_tid = int(entry.get("ThreadHandle_TID"), 16)
                 if target_tid:
-                    context_data = self.parse_context(entry.get("ThreadContext"))
+                    context_data = self.parse_context(entry.get("*ThreadContext"))
                     rip = context_data.get("rip")
                     rcx = context_data.get("rcx")
                     if rip:
@@ -100,8 +100,20 @@ class Parser:
                     if rcx:
                         self.context_changes[target_tid]["rcx"] = rcx 
                 return None
+                            
+            elif method == "NtSetInformationThread" and entry.get("ThreadHandle_TID"):
+                target_tid = int(entry.get("ThreadHandle_TID"), 16)
+                if target_tid:
+                    context_data = self.parse_context(entry.get("*ThreadInformation"))
+                    eip = context_data.get("eip")
+                    eax = context_data.get("eax")
+                    if eip:
+                        self.context_changes[target_tid]["eip"] = eip 
+                    if eax:
+                        self.context_changes[target_tid]["eax"] = eax 
+                return None
 
-            elif method == "NtResumeThread":
+            elif method == "NtResumeThread" and entry.get("ThreadHandle_PID"):
                 target_tid = int(entry.get("ThreadHandle_TID"), 16)
                 if target_tid:
                     # Was the context of this thread changed?
