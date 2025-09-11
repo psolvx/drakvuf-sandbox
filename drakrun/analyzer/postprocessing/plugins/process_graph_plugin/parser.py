@@ -1,146 +1,112 @@
 from collections import defaultdict
 import logging
-import re
-from typing import Dict, Any, Iterator
+from typing import Dict, Any, Iterator, Optional
 
 from .events import BaseEvent, AllocateEvent, WriteEvent, ExecuteEvent
 from ..parse_utils import parse_log
 
 logger = logging.getLogger(__name__)
 
+def to_int(val: Optional[str]) -> Optional[int]:
+    if val is None:
+        return None
+    try:
+        if isinstance(val, str) and val.startswith('0x'):
+            return int(val, 16)
+        return int(val)
+    except (ValueError, TypeError):
+        return None
+
 class Parser:
     def __init__(self):
-
-        # tid: {"rax": int, "rcx": int}
+        # tid: {"rip": int, "rcx": int, "eip": int, "eax": int}
         self.context_changes: Dict[int, Dict[str, int]] = defaultdict(dict)
 
-    def parse_entry(self, entry: Dict[str, Any]) -> BaseEvent:
+    def parse_entry(self, entry: Dict[str, Any]) -> Optional[BaseEvent]:
         method = entry.get("Method")
         retval = entry.get("ReturnValue")
         if not method or retval is None:
             return None
 
+        args = entry.get("Arguments", {})
+        extra = entry.get("Extra", {})
+
         try:
             base_info = {
-                "source_pid": entry.get("PID"),
-                "evtid": int(entry.get("EventUID"), 16),
-                "method": entry.get("Method"),
+                "source_pid": to_int(entry.get("PID")),
+                "evtid": to_int(entry.get("EventUID")),
+                "method": method,
                 "raw_entry": entry
             }
 
             # Allocation primitives
-            if method in ["NtAllocateVirtualMemory", "NtAllocateVirtualMemoryEx"] and entry.get("ProcessHandle_PID"):
-                return AllocateEvent(
-                    **base_info,
-                    target_pid=int(entry.get("ProcessHandle_PID"), 16),
-                    address=int(entry["*BaseAddress"], 16),
-                    size=int(entry["*RegionSize"], 16)
-                )                
+            if method in ["NtAllocateVirtualMemory", "NtAllocateVirtualMemoryEx"]:
+                target_pid = to_int(extra.get("ProcessHandle_PID"))
+                address = to_int(extra.get("*BaseAddress"))
+                size = to_int(extra.get("*RegionSize"))
+                if target_pid and address is not None and size is not None:
+                    return AllocateEvent(**base_info, target_pid=target_pid, address=address, size=size)
 
             # Write primitives
-            elif method == "NtWriteVirtualMemory" and entry.get("ProcessHandle_PID") and int(entry["*NumberOfBytesWritten"], 16) > 0:
-                return WriteEvent(
-                    **base_info,
-                    target_pid=int(entry.get("ProcessHandle_PID"), 16),
-                    address=int(entry["*BaseAddress"], 16),
-                    bytes_written=int(entry["*NumberOfBytesWritten"], 16)
-                )
+            elif method == "NtWriteVirtualMemory":
+                target_pid = to_int(extra.get("ProcessHandle_PID"))
+                address = to_int(args.get("BaseAddress"))
+                bytes_written = to_int(extra.get("*NumberOfBytesWritten"))
+                if target_pid and address is not None and bytes_written > 0:
+                    return WriteEvent(**base_info, target_pid=target_pid, address=address, bytes_written=bytes_written)
             
-            elif method in ["NtMapViewOfSection", "NtMapViewOfSectionEx"] and entry.get("ProcessHandle_PID"):
-                return WriteEvent(
-                    **base_info,
-                    target_pid=int(entry.get("ProcessHandle_PID"), 16),
-                    address=int(entry["*BaseAddress"], 16),
-                    bytes_written=int(entry["*ViewSize"], 16)
-                ) 
-            
-            elif method == "NtAddAtom":
-                pass
+            elif method in ["NtMapViewOfSection", "NtMapViewOfSectionEx"]:
+                target_pid = to_int(extra.get("ProcessHandle_PID"))
+                address = to_int(extra.get("*BaseAddress"))
+                size = to_int(extra.get("*ViewSize"))
+                if target_pid and address is not None and size is not None:
+                    return WriteEvent(**base_info, target_pid=target_pid, address=address, bytes_written=size)
 
             # Execute primitives
-            elif method == "NtCreateThread" and entry.get("ProcessHandle_PID"):
-                target_pid = int(entry.get("ProcessHandle_PID"), 16)
-                context_data = self.parse_context(entry.get("*ThreadContext"))
-                rip = context_data.get("rip")
-                if target_pid and rip:
-                    return ExecuteEvent(
-                        **base_info,
-                        target_pid=target_pid,
-                        addresses=[rip],
-                    )
-                
-            elif method == "NtCreateThreadEx" and entry.get("ProcessHandle_PID"):
-                target_pid = int(entry.get("ProcessHandle_PID"), 16)
-                start_routine = int(entry.get("*StartRoutine"), 16)
-                if target_pid and start_routine:
-                    return ExecuteEvent(
-                        **base_info,
-                        target_pid=target_pid,
-                        addresses=[start_routine],
-                    )
-                
-            elif method == "RtlCreateUserThread" and entry.get("ProcessHandle_PID"):
-                target_pid = int(entry.get("ProcessHandle_PID"), 16)
-                start_address = entry.get("*StartAddress", 16)
+            elif method in ["NtCreateThread", "NtCreateThreadEx", "RtlCreateUserThread"]:
+                target_pid = to_int(extra.get("ProcessHandle_PID"))
+                start_address = (
+                    to_int(extra.get("ThreadContext", {}).get("Rip")) or
+                    to_int(extra.get("*StartRoutine")) or
+                    to_int(extra.get("*StartAddress"))
+                )
                 if target_pid and start_address:
-                    return ExecuteEvent(
-                        **base_info,
-                        target_pid=target_pid,
-                        addresses=[start_address],
-                    )
+                    return ExecuteEvent(**base_info, target_pid=target_pid, addresses=[start_address])
                 
-            elif method == "NtSetContextThread" and entry.get("ThreadHandle_PID"):
-                target_tid = int(entry.get("ThreadHandle_TID"), 16)
-                if target_tid:
-                    context_data = self.parse_context(entry.get("*ThreadContext"))
-                    rip = context_data.get("rip")
-                    rcx = context_data.get("rcx")
-                    if rip:
-                        self.context_changes[target_tid]["rip"] = rip 
-                    if rcx:
-                        self.context_changes[target_tid]["rcx"] = rcx 
+            elif method == "NtSetContextThread":
+                target_tid = to_int(extra.get("ThreadHandle_TID"))
+                context_data = extra.get("Context", {})
+                if target_tid and context_data:
+                    rip = to_int(context_data.get("Rip"))
+                    rcx = to_int(context_data.get("Rcx"))
+                    if rip: self.context_changes[target_tid]["rip"] = rip 
+                    if rcx: self.context_changes[target_tid]["rcx"] = rcx
                 return None
                             
-            elif method == "NtSetInformationThread" and entry.get("ThreadHandle_TID"):
-                target_tid = int(entry.get("ThreadHandle_TID"), 16)
-                if target_tid:
-                    context_data = self.parse_context(entry.get("*ThreadInformation"))
-                    eip = context_data.get("eip")
-                    eax = context_data.get("eax")
-                    if eip:
-                        self.context_changes[target_tid]["eip"] = eip 
-                    if eax:
-                        self.context_changes[target_tid]["eax"] = eax 
+            elif method == "NtSetInformationThread":
+                target_tid = to_int(extra.get("ThreadHandle_TID"))
+                context_data = extra.get("Wow64Context", {})
+                if target_tid and context_data:
+                    eip = to_int(context_data.get("Eip"))
+                    eax = to_int(context_data.get("Eax"))
+                    if eip: self.context_changes[target_tid]["eip"] = eip 
+                    if eax: self.context_changes[target_tid]["eax"] = eax
                 return None
 
-            elif method == "NtResumeThread" and entry.get("ThreadHandle_PID"):
-                target_tid = int(entry.get("ThreadHandle_TID"), 16)
-                if target_tid:
-                    # Was the context of this thread changed?
-                    context = self.context_changes.get(target_tid)
-                    if context:
-                        del self.context_changes[target_tid]
-                        return ExecuteEvent(
-                            **base_info,
-                            target_pid=int(entry.get("ThreadHandle_PID"), 16),
-                            addresses=[v for v in context.values() if v]
-                        )
+            elif method == "NtResumeThread":
+                target_pid = to_int(extra.get("ThreadHandle_PID"))
+                target_tid = to_int(extra.get("ThreadHandle_TID"))
+                if target_pid and target_tid and target_tid in self.context_changes:
+                    # Retrieve the pending context change and clear it
+                    context = self.context_changes.pop(target_tid)
+                    addresses = [v for v in context.values() if v]
+                    if addresses:
+                        return ExecuteEvent(**base_info, target_pid=target_pid, addresses=addresses)
                         
-        
         except (KeyError, ValueError, TypeError) as e:
             logger.debug(f"Skipping malformed log entry for {method}: {e}, event {entry.get('EventUID')}")
-            return None
 
         return None
-    
-    def parse_context(self, context_str: str) -> Dict[str, int]:
-        registers = {}
-        matches = re.findall(r'(\w+): (\d+)', context_str)
-        for (reg, val) in matches:
-            registers[reg] = int(val)
-        return registers
-    
-
 
 def stream_events(syscall_log_path) -> Iterator[BaseEvent]:
     logger.info(f"Streaming and parsing events from {syscall_log_path}...")
