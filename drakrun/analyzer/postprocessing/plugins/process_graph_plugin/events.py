@@ -1,32 +1,43 @@
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from typing import List, Optional, Dict, Any
 
 @dataclass
 class BaseEvent:
     source_pid: int
-    target_pid: int
     evtid: int
-    raw_entry: dict
     method: str
+    raw_entries: List[Dict[str, Any]] = field(default_factory=list)
+    target_pid: Optional[int] = None
+    source_seqid: Optional[int] = None
+    target_seqid: Optional[int] = None
 
 @dataclass
 class AllocateEvent(BaseEvent):
-    address: int 
-    size: int 
+    address: int = 0
+    size: int = 0
     event_type: str = "allocate"
 
 @dataclass
 class WriteEvent(BaseEvent):
-    address: int
-    bytes_written: int
+    address: int = 0
+    bytes_written: int = 0
     event_type: str = "write"
 
 @dataclass
 class ExecuteEvent(BaseEvent):
-    target_pid: int
-    addresses: List[int]
+    addresses: List[int] = None
     target_tid: Optional[int] = None
     event_type: str = "execute"
+
+@dataclass
+class FileTaskFolderEvent(BaseEvent):
+    file_name: str = ""
+    event_type: str = "file_write"
+
+@dataclass
+class TaskRegisterEvent(BaseEvent):
+    task_name: str = ""
+    event_type: str = "task_register"
 
 
 def event_to_dict(event_obj: BaseEvent) -> Dict[str, Any]:
@@ -41,6 +52,8 @@ EVENT_CLASS_MAP = {
     "AllocateEvent": AllocateEvent,
     "WriteEvent": WriteEvent,
     "ExecuteEvent": ExecuteEvent,
+    "FileTaskFolderEvent": FileTaskFolderEvent,
+    "TaskRegisterEvent": TaskRegisterEvent
 }
 
 def dict_to_event(event_dict: dict) -> BaseEvent:
