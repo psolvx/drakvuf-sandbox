@@ -5,7 +5,7 @@ import { ProcessGraph } from "./ProcessGraph.jsx";
 
 export function ProcessGraphView({
     analysisId,
-    onProcessSelect,
+    onElementSelect,
 }) {
     const [graphElements, setGraphElements] = useState(null);
     const [selectedElementData, setSelectedElementData] = useState(null);
@@ -17,6 +17,17 @@ export function ProcessGraphView({
         setError(null);
         getAnalysisProcessGraph( {analysisId, AbortController })
             .then((data) => {
+
+                const nodesWithoutId = data.elements.nodes.filter(n => !n.data.id);
+                const edgesWithoutId = data.elements.edges.filter(e => !e.data.id);
+
+                if (nodesWithoutId.length > 0) {
+                    console.error("ERROR: The following nodes are missing an ID:", nodesWithoutId);
+                }
+                if (edgesWithoutId.length > 0) {
+                    console.error("ERROR: The following edges are missing an ID:", edgesWithoutId);
+                }
+
                 setGraphElements(data.elements);
             })
             .catch((e) => {
@@ -35,26 +46,30 @@ export function ProcessGraphView({
         return () => abortController.abort();
     }, [fetchGraphData]);
 
+    /*
     const handleElementSelect = (element) => {
-        if (element) {
-            setSelectedElementData(element.data());
-        } else {
-            setSelectedElementData(null);
+        if (onElementSelect) {
+            onElementSelect(element);
         }
+        setSelectedElementData(element); 
     };
+    */
 
-    if (loading) return <div>Loading...</div>;
-    if (error) return <div>Error: {error}</div>;
-    if (!graphElements) return <div>No data</div>;
+    const handleElementSelect = useCallback((element) => {
+        if (onElementSelect) {
+            onElementSelect(element);
+        }
+        setSelectedElementData(element); 
+    }, [onElementSelect]);
 
     return (
-    <div className="container-fluid">
-        <div className="row">
-            <div className="col-12">
-                <ProcessGraph elements={graphElements} onElementSelect={handleElementSelect}/>
-            </div>
-        </div>
+    <div className="position-relative">
+        <ProcessGraph elements={graphElements} onElementSelect={handleElementSelect} />
+        
+        {loading && <div className="overlay">Loading...</div>}
+        {error && <div className="overlay">Error: {error}</div>}
+        {!graphElements && <div className="overlay">No data</div>}
     </div>
-    );
+);
 }
  

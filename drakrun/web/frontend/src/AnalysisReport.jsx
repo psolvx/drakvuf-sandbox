@@ -19,6 +19,8 @@ import { faDownload } from "@fortawesome/free-solid-svg-icons";
 import axios, { CanceledError } from "axios";
 import { AnalysisSummary } from "./AnalysisSummary.jsx";
 import { ProcessBadge } from "./ProcessBadge.jsx";
+import { DetectionInfoView } from "./DetectionInfoView.jsx";
+
 
 export function AnalysisLogViewerTab({ analysisId }) {
     const logType = useTabContext()?.activeTab;
@@ -216,77 +218,84 @@ function PaddedTab({ tab, children }) {
 function AnalysisReportTabs({
     analysis,
     analysisSummary,
-    selectedProcess,
-    setSelectedProcess,
-    activeReportTab,
-    setActiveReportTab,
-    onSelectProcess,
+    selectedElement,
+    activeTab,
+    onTabSwitch,
+    onSelectProcess
 }) {
-    const getHeader = useCallback(
-        (tab) => {
-            if (tab === "Process info") {
-                let process;
-                if (analysisSummary?.processes && selectedProcess) {
-                    process = analysisSummary.processes[selectedProcess];
-                }
-                if (!process) {
-                    return "Process info";
-                }
-                return (
-                    <>
-                        <ProcessBadge process={process} />
-                    </>
-                );
-            } else {
-                return tab;
-            }
-        },
-        [analysisSummary, selectedProcess],
-    );
-    return (
+    const TABS = ["Summary", "Process Info", "Detection Info", "General Logs"];
+    if (analysis.screenshots) {
+        TABS.push("Screenshots");
+    }
+
+    const getHeader = useCallback((tab) => {
+    return tab;
+});
+
+    const selectedProcess = selectedElement?.type === 'Process' ? selectedElement : null;
+    const selectedDetection = selectedElement?.type === 'detection' ? selectedElement : null;
+
+       return (
         <div className="card">
             <div className="card-body">
                 <TabSwitcher
-                    activeTab={activeReportTab || "Summary report"}
-                    onTabSwitch={setActiveReportTab}
+                    tabs={TABS}
+                    activeTab={activeTab}
+                    onTabSwitch={onTabSwitch}
                     getHeader={getHeader}
                 >
-                    <PaddedTab tab="Summary report">
+                    <PaddedTab tab="Summary">
                         <AnalysisSummary
                             analysisSummary={analysisSummary}
-                            setSelectedProcess={setSelectedProcess}
+                            setSelectedProcess={onSelectProcess}
                         />
                     </PaddedTab>
-                    <PaddedTab tab="General logs">
+
+                    <PaddedTab tab="Process Info">
+                        {selectedProcess ? (
+                            <ProcessLogViewer
+                                analysisId={analysis.id}
+                                selectedProcess={selectedProcess.seqid}
+                            />
+                        ) : (
+                            <div className="text-muted p-4 text-center">
+                                <p className="mb-0">Please select a process node in the graph or tree to view its details.</p>
+                            </div>
+                        )}
+                    </PaddedTab>
+
+                    <PaddedTab tab="Detection Info">
+                        {selectedElement ? (
+                            <DetectionInfoView selectedElement={selectedElement} />
+                        ) : (
+                            <div className="text-muted p-4 text-center">
+                                <p className="mb-0">Please select a red detection edge in the graph to view its details.</p>
+                            </div>
+                        )}
+                    </PaddedTab>
+
+                    <PaddedTab tab="General Logs">
                         <AnalysisLogViewer analysisId={analysis.id} />
                     </PaddedTab>
-                    <PaddedTab tab="Process info">
-                        <ProcessLogViewer
-                            analysisId={analysis.id}
-                            selectedProcess={selectedProcess}
-                        />
-                    </PaddedTab>
-                    <PaddedTab tab="Process graph">
-                        <ProcessGraphView
-                            analysisId={analysis.id}
-                            onProcessSelect={onSelectProcess}
-                        />
-                    </PaddedTab>
-                    {analysis.screenshots ? (
+                    
+                    {analysis.screenshots && (
                         <PaddedTab tab="Screenshots">
                             <AnalysisScreenshotViewer analysis={analysis} />
                         </PaddedTab>
-                    ) : null}
+                    )}
                 </TabSwitcher>
             </div>
         </div>
     );
 }
 
+
+
 export function AnalysisReport({ analysis }) {
-    const [selectedProcess, setSelectedProcess] = useState();
-    const [activeReportTab, setActiveReportTab] = useState();
+    const [selectedElement, setSelectedElement] = useState(null);
+    const [activeTab, setActiveTab] = useState("Summary");
     const [analysisSummary, setAnalysisSummary] = useState();
+
     const plugins = analysis.options?.plugins;
     const baseUrl = axios.defaults.baseURL;
     const analysisId = analysis.id;
@@ -308,13 +317,30 @@ export function AnalysisReport({ analysis }) {
         fetchSummary();
     }, [analysisId, fetchSummary]);
 
-    const onSelectProcess = useCallback(
-        (processId) => {
-            setSelectedProcess(processId);
-            setActiveReportTab("Process info");
-        },
-        [setSelectedProcess, setActiveReportTab],
-    );
+      const handleSelectElement = useCallback((element) => {
+        setSelectedElement(element);
+
+        if (element?.type === 'Process') {
+            setActiveTab("Process Info");
+        } else if (element?.type === 'detection') {
+            setActiveTab("Detection Info");
+        }
+    }, [setSelectedElement, setActiveTab]);
+
+    const handleSelectProcessById = useCallback((seqId) => {
+        if (seqId === null || seqId === undefined) {
+            setSelectedElement(null);
+        } else {
+            const processNodeData = analysisSummary?.processes[seqId];
+            handleSelectElement({
+                type: 'Process',
+                data: { seqid: seqId, data: processNodeData }
+            });
+        }
+    }, [handleSelectElement, analysisSummary]);
+
+    const selectedProcessSeqId = selectedElement?.type === 'Process' ? selectedElement.seqid : undefined;
+
 
     return (
         <>
@@ -322,8 +348,8 @@ export function AnalysisReport({ analysis }) {
                 <div className="col-6">
                     <ProcessTreeView
                         analysisId={analysis.id}
-                        selectedProcess={selectedProcess}
-                        onProcessSelect={onSelectProcess}
+                        selectedProcess={selectedProcessSeqId}
+                        onProcessSelect={handleSelectProcessById}
                     />
                 </div>
                 <div className="col-6">
@@ -372,15 +398,25 @@ export function AnalysisReport({ analysis }) {
                 </div>
             </div>
             <div className="row py-4">
+                <div className="card">
+                    <div className="card-header fw-bold">Process Graph</div>
+                    <div className="card-body">
+                        <ProcessGraphView
+                            analysisId={analysis.id}
+                            onElementSelect={handleSelectElement}
+                        />
+                    </div>
+                </div>
+            </div>
+            <div className="row py-4">
                 <div className="col">
                     <AnalysisReportTabs
                         analysis={analysis}
                         analysisSummary={analysisSummary}
-                        selectedProcess={selectedProcess}
-                        setSelectedProcess={onSelectProcess}
-                        activeReportTab={activeReportTab}
-                        setActiveReportTab={setActiveReportTab}
-                        onSelectProcess={onSelectProcess}
+                        selectedElement={selectedElement}
+                        activeTab={activeTab}
+                        onTabSwitch={setActiveTab}
+                        onSelectProcess={handleSelectProcessById}
                     />
                 </div>
             </div>

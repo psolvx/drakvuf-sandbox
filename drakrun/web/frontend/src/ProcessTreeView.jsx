@@ -64,6 +64,7 @@ export function ProcessTreeView({
             });
     }, []);
 
+    /*
     useEffect(() => {
         if (!processTree) return;
         const parents = getProcessParents(processTree, selectedProcess);
@@ -73,7 +74,7 @@ export function ProcessTreeView({
             );
         }
     }, [selectedProcess, processTree]);
-
+    */
     return (
         <div className="card">
             <div className="card-body">
