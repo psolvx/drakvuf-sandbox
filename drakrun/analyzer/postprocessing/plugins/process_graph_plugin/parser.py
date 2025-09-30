@@ -108,8 +108,10 @@ class Parser:
                 target_pid = to_int(extra.get("ProcessHandle_PID"))
                 address = to_int(args.get("BaseAddress"))
                 bytes_written = to_int(extra.get("*NumberOfBytesWritten", 0))
-                if target_pid and address is not None and bytes_written > 0:
-                    return WriteEvent(**base_info, target_pid=target_pid, address=address, bytes_written=bytes_written, raw_entries=[entry])
+                number_of_bytes_to_write = to_int(args.get("NumberOfBytesToWrite", 0))
+                size = bytes_written if bytes_written > 0 else number_of_bytes_to_write
+                if target_pid and address is not None and size > 0:
+                    return WriteEvent(**base_info, target_pid=target_pid, address=address, bytes_written=size, raw_entries=[entry])
             
             elif method in ["NtMapViewOfSection", "NtMapViewOfSectionEx"]:
                 target_pid = to_int(extra.get("ProcessHandle_PID"))
