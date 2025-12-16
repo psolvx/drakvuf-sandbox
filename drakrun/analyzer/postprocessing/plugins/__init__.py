@@ -15,6 +15,8 @@ from .plugin_base import PostprocessPlugin
 from .process_dumps import process_dumps
 from .screenshot_metadata import screenshot_metadata
 from .split_drakmon_log import split_drakmon_log
+from .cleanup import cleanup
+from .detection import run_detections
 
 POSTPROCESS_PLUGINS = [
     PostprocessPlugin(
@@ -29,6 +31,11 @@ POSTPROCESS_PLUGINS = [
         function=build_process_tree,
         requires=["procmon.log"],
         generates=[],  # Always regenerate
+    ),
+        PostprocessPlugin(
+        function=run_detections,
+        requires=["drakmon.log"],
+        generates=["detections.json"], 
     ),
     PostprocessPlugin(
         function=capa_analysis,
@@ -81,5 +88,9 @@ POSTPROCESS_PLUGINS = [
     ),
     PostprocessPlugin(
         function=index_logs, requires=["process_tree.json"], generates=["log_index"]
+    ),
+    # run cleanup plugin at the end
+    PostprocessPlugin(
+        function=cleanup, requires=["drakmon.log"], generates=[]
     ),
 ]
