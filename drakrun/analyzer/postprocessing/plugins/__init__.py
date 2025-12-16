@@ -16,7 +16,7 @@ from .process_dumps import process_dumps
 from .screenshot_metadata import screenshot_metadata
 from .split_drakmon_log import split_drakmon_log
 from .cleanup import cleanup
-from .detection import run_detections
+from .detection.main import run_detections
 
 POSTPROCESS_PLUGINS = [
     PostprocessPlugin(
@@ -37,14 +37,14 @@ POSTPROCESS_PLUGINS = [
         requires=["drakmon.log"],
         generates=["detections.json"], 
     ),
-    PostprocessPlugin(
-        function=capa_analysis,
-        requires=[
-            "process_tree.json",
-            "inject.log",
-        ],
-        generates=["ttps.json"],
-    ),
+    #PostprocessPlugin(
+    #    function=capa_analysis,
+    #    requires=[
+    #        "process_tree.json",
+    #        "inject.log",
+    #    ],
+    #    generates=["ttps.json"],
+    #),
     PostprocessPlugin(
         function=screenshot_metadata,
         requires=["screenshots.json"],

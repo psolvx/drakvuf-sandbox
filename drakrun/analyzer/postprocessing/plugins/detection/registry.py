@@ -29,3 +29,5 @@ def load_rules(package: ModuleType):
                 importlib.import_module(name)
             except Exception as e:
                 logger.error(f"Failed to load rule module {name}: {e}")
+
+drakmon_rules = RuleSet("drakmon")
