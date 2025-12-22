@@ -7,7 +7,7 @@ from ..models import WriteEvent, ExecuteEvent, Finding
 from ..context import AnalysisContext
 
 logger = logging.getLogger(__name__)
-
+logger.setLevel(logging.INFO)
 
 @drakmon_rules.register
 class ProcessInjectionRule(BaseRule):

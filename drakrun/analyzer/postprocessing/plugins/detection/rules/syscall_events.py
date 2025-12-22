@@ -240,3 +240,82 @@ class SyscallEventSynthesizer(BaseRule):
             )
 
         return None
+
+    # test rules
+    @subscribe(SystemCall,
+           method="NtWriteVirtualMemory",
+           extra__ptr_NumberOfBytesWritten__gt=0x0)
+    def handle_big_write(self, log: SystemCall, context: AnalysisContext):
+        logger.info(f'big write {log.extra["*NumberOfBytesWritten"]}')
+
+    #@subscribe(SystemCall, method="NtProtectVirtualMemory")
+    def handle_protect_memory(self, log: SystemCall, context: AnalysisContext) -> Optional[WriteEvent]:
+        """
+        Handle memory protection changes (e.g., RW -> RWX).
+
+        Common pattern: Allocate RW, write shellcode, change to RWX, execute.
+        While not technically a "write", it marks memory as executable and is often
+        part of injection chains.
+        """
+        target_pid = to_int(log.extra.get("ProcessHandle_PID"))
+        address = to_int(log.args.get("*BaseAddress"))
+        size = to_int(log.args.get("*NumberOfBytesToProtect"))
+        new_protect = to_int(log.args.get("NewAccessProtection"))
+
+        # Only track if changing to executable (PAGE_EXECUTE_* flags have bit 0x10, 0x20, 0x40, 0x80)
+        # Common executable flags: 0x10 (EXECUTE), 0x20 (EXECUTE_READ), 0x40 (EXECUTE_READWRITE)
+        is_executable = new_protect and (new_protect & 0xF0)  # Any execute permission
+
+        if target_pid and address is not None and size and is_executable:
+            source_pid = log.raw.get("PID", 0)
+
+            source_proc = context.process_tree.get_process(source_pid)
+            target_proc = context.process_tree.get_process(target_pid)
+
+            # Treat protection change to executable as a "write" event
+            return WriteEvent(
+                source_pid=source_pid,
+                evtid=to_int(log.raw.get("EventUID", 0)) or 0,
+                method=log.method,
+                target_pid=target_pid,
+                address=address,
+                bytes_written=size,  # Use the protected region size
+                raw_entries=[log.raw],
+                source_seqid=source_proc.seqid if source_proc else None,
+                target_seqid=target_proc.seqid if target_proc else None,
+            )
+        return None
+
+    #@subscribe(SystemCall, method="NtUnmapViewOfSection")
+    def handle_unmap_view(self, log: SystemCall, context: AnalysisContext) -> Optional[WriteEvent]:
+        """
+        Handle section unmapping (process hollowing technique).
+
+        Process hollowing pattern:
+        1. Create suspended process
+        2. Unmap original executable
+        3. Map malicious code (NtMapViewOfSection)
+        4. Resume thread
+        """
+        target_pid = to_int(log.extra.get("ProcessHandle_PID"))
+        base_address = to_int(log.args.get("BaseAddress"))
+
+        if target_pid and base_address:
+            source_pid = log.raw.get("PID", 0)
+
+            source_proc = context.process_tree.get_process(source_pid)
+            target_proc = context.process_tree.get_process(target_pid)
+
+            # Treat unmapping as a write preparation (size unknown, use page size)
+            return WriteEvent(
+                source_pid=source_pid,
+                evtid=to_int(log.raw.get("EventUID", 0)) or 0,
+                method=log.method,
+                target_pid=target_pid,
+                address=base_address,
+                bytes_written=0x1000,  # Minimum page size as placeholder
+                raw_entries=[log.raw],
+                source_seqid=source_proc.seqid if source_proc else None,
+                target_seqid=target_proc.seqid if target_proc else None,
+            )
+        return None

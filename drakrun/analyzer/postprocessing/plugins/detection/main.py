@@ -1,17 +1,14 @@
 import logging
+from pathlib import Path
+import msgspec
 
 from ..plugin_base import PostprocessContext
 from . import rules as rules_package
-
-import json
-from pathlib import Path
-
 from .context import AnalysisContext
 from .engine import DetectionEngine
-from .registry import RuleSet, load_rules
+from .registry import RuleSet, load_rules, drakmon_rules
 from .models import Log
 from .parser import LogParser
-from .registry import drakmon_rules
 
 logger = logging.getLogger(__name__)
 
@@ -42,16 +39,15 @@ def run_detections(context: PostprocessContext) -> None:
                 engine.process(log_obj)
 
 
-    findings_data = [
-        f.model_dump(mode='json', exclude_none=True) 
-        for f in analysis_ctx.findings
-    ]
-
     out_path = analysis_dir / "detections.json"
-    with open(out_path, 'w') as f:
-        json.dump(findings_data, f, indent=2)
 
-    logger.info(f"Detection complete. Findings: {len(findings_data)}")
+    encoder = msgspec.json.Encoder()
+    json_bytes = encoder.encode(analysis_ctx.findings)
+
+    with open(out_path, 'wb') as f:
+        f.write(json_bytes)
+
+    logger.info(f"Detection complete. Findings: {len(analysis_ctx.findings)}")
 
 def enrich_seqid(log: Log, analysis_ctx: AnalysisContext):
     """Enrich log with source_seqid from process tree."""

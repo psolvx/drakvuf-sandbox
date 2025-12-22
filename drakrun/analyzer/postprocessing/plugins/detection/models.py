@@ -1,76 +1,59 @@
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+import msgspec
 
 
-class PipelineItem(BaseModel):
-    model_config = ConfigDict(extra='ignore', arbitrary_types_allowed=True)
+class PipelineItem(msgspec.Struct, omit_defaults=True, forbid_unknown_fields=False):
+    """Base class for all pipeline items."""
     source_seqid: Optional[int] = None
     target_seqid: Optional[int] = None
 
 
-class Log(PipelineItem):
+class Log(PipelineItem, forbid_unknown_fields=False):
     """Base for all raw logs from the file"""
-    raw: Dict[str, Any] = Field(exclude=True)
+    raw: Dict[str, Any] = msgspec.field(default_factory=dict)
 
 
-class SystemCall(Log):
-    model_config = ConfigDict(
-        extra='ignore',
-        arbitrary_types_allowed=True,
-        populate_by_name=True
-    )
-    method: str = Field(alias="Method")
-    args: Dict[str, Any] = Field(alias="Arguments", default_factory=dict)
-    extra: Dict[str, Any] = Field(alias="Extra", default_factory=dict)
-    return_value: str = Field(alias="ReturnValue")
+class SystemCall(Log, kw_only=True, forbid_unknown_fields=False, rename={"method": "Method", "args": "Arguments", "extra": "Extra", "return_value": "ReturnValue"}):
+    method: str = ""
+    args: Dict[str, Any] = msgspec.field(default_factory=dict)
+    extra: Dict[str, Any] = msgspec.field(default_factory=dict)
+    return_value: str = ""
 
 
-class WinApiCall(Log):
-    model_config = ConfigDict(
-        extra='ignore',
-        arbitrary_types_allowed=True,
-        populate_by_name=True
-    )
-    method: str = Field(alias="Method")
-    args: Dict[str, Any] = Field(alias="Arguments")
-    return_value: str = Field(alias="ReturnValue")
+class WinApiCall(Log, kw_only=True, forbid_unknown_fields=False, rename={"method": "Method", "args": "Arguments", "return_value": "ReturnValue"}):
+    method: str = ""
+    args: Dict[str, Any] = msgspec.field(default_factory=dict)
+    return_value: str = ""
 
-    @model_validator(mode="before")
-    @classmethod
-    def build_arguments(cls, values: Dict[str, Any]) -> Dict[str, Any]:
-        args = values["Arguments"]
-        values["Arguments"] = dict(arg.split("=", 1) for arg in args)
-        return values
-
-class Event(PipelineItem):
+class Event(PipelineItem, kw_only=True, forbid_unknown_fields=False):
     """Base class for synthesized events"""
-    source_pid: int
-    evtid: int
-    method: str
-    raw_entries: List[Dict[str, Any]] = Field(default_factory=list)
+    source_pid: int = 0
+    evtid: int = 0
+    method: str = ""
+    raw_entries: List[Dict[str, Any]] = msgspec.field(default_factory=list)
     target_pid: Optional[int] = None
 
 
-class AllocateEvent(Event):
+class AllocateEvent(Event, forbid_unknown_fields=False):
     address: int = 0
     size: int = 0
     event_type: str = "allocate"
 
 
-class WriteEvent(Event):
+class WriteEvent(Event, forbid_unknown_fields=False):
     address: int = 0
     bytes_written: int = 0
     event_type: str = "write"
 
 
-class ExecuteEvent(Event):
-    addresses: List[int] = Field(default_factory=list)
+class ExecuteEvent(Event, forbid_unknown_fields=False):
+    addresses: List[int] = msgspec.field(default_factory=list)
     target_tid: Optional[int] = None
     event_type: str = "execute"
 
 
-class Finding(Event):
-    title: str
-    description: str
-    confidence: str
-    related_events: List[Event]
+class Finding(Event, forbid_unknown_fields=False):
+    title: str = ""
+    description: str = ""
+    confidence: str = ""
+    related_events: List[Event] = msgspec.field(default_factory=list)
