@@ -68,15 +68,21 @@ def prepare_output_dir(output_dir: pathlib.Path, options: AnalysisOptions) -> No
 
 
 def expand_command_variables(
-    command: str | list[str], variables: Dict[str, str]
+    command: str | list[str], sample_info: PreparedSampleInfo
 ) -> str | list[str]:
+    variables = {
+        "SAMPLE_PATH": sample_info.guest_executable_path if sample_info else "",
+        "WORKING_DIR": sample_info.guest_working_directory if sample_info else "",
+        "TARGET_DIR": sample_info.guest_target_directory if sample_info else "",
+    }
+
     if isinstance(command, str):
         expanded = command
         for var_name, var_value in variables.items():
             expanded = expanded.replace(f"%{var_name}%", var_value)
         return expanded
     elif isinstance(command, list):
-        return [expand_command_variables(arg, variables) for arg in command]
+        return [expand_command_variables(arg, sample_info) for arg in command]  # type: ignore
     return command
 
 
@@ -170,11 +176,6 @@ def analyze_file(
             f"Archive mode: extract_archive=True, guest_archive_entry_path={options.guest_archive_entry_path}, "
             f"start_command={options.start_command}"
         )
-        if not options.guest_archive_entry_path and not options.start_command:
-            raise ValueError(
-                "Archive extractor requires guest_archive_entry_path or start_command "
-                "to know what to execute after unpacking archive."
-            )
 
     tcpdump_file = output_dir / "dump.pcap"
     drakmon_file = output_dir / "drakmon.log"
@@ -202,19 +203,19 @@ def analyze_file(
             post_restore_cmd = get_post_restore_command(network_conf.net_enable)
             drakshell.check_call(post_restore_cmd)
 
-        # Prepare sample using file handlers
+        # Prepare sample using file handlers.
+        # This can involve transfering to vm, mounting/unpacking
+        # and automatically selecting file to execute if not specified
         sample_info: Optional[PreparedSampleInfo] = None
         if options.host_sample_path is not None:
-            handler = get_handler_for_file(options.host_sample_path, options)
+            handler = get_handler_for_file(options)
             if handler is None:
                 raise ValueError(
                     f"No handler found for file: {options.host_sample_path}"
                 )
 
             log.info(f"Using handler: {handler.__class__.__name__}")
-            sample_info = handler.prepare(
-                config, drakshell, injector, options.host_sample_path, options
-            )
+            sample_info = handler.prepare(config, drakshell, injector, options)
 
             # Determine start command if not provided
             if options.start_command is None and sample_info.guest_executable_path:
@@ -229,27 +230,19 @@ def analyze_file(
 
         try:
             if options.start_command is not None:
-                variables = {
-                    "SAMPLE_PATH": sample_info.guest_executable_path
-                    if sample_info
-                    else "",
-                    "WORKING_DIR": sample_info.guest_working_directory
-                    if sample_info
-                    else "",
-                    "TARGET_DIR": sample_info.guest_target_directory
-                    if sample_info
-                    else "",
-                }
-
                 options.start_command = expand_command_variables(
-                    options.start_command, variables
+                    options.start_command, sample_info
                 )
 
                 start_method = options.start_method or preferred_start_method
                 exec_parameters = make_exec_parameters(
                     options.start_command,
                     start_method,
-                    str(options.guest_working_directory),
+                    str(
+                        sample_info.guest_working_directory
+                        if sample_info
+                        else options.guest_working_directory
+                    ),
                     shellexec_supported,
                 )
                 options.start_command = exec_parameters.full_command
